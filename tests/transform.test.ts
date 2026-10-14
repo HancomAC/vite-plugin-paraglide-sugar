@@ -446,6 +446,9 @@ export { values }`);
       String.raw`import { m } from '\u0023messages';`,
       String.raw`export { m } from"\u0023messages";`,
       String.raw`const load = () => import ( ` + "`\\u0023messages`" + ` );`,
+      String.raw`import { m } from /* note */ '\x23messages';`,
+      String.raw`export * from // note` + "\n" + String.raw`'\x23messages';`,
+      String.raw`const load = () => import /* a */ (/* @vite-ignore */ '\x23messages');`,
     ]) {
       expect(mayImportMarker(code, "#messages")).toBe(true);
     }

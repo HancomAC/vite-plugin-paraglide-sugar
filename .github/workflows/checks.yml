@@ -1,0 +1,37 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 22
+            paraglide: 2.18.1
+          - node: 24
+            paraglide: 2.20.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.paraglide == '2.18.1'
+        run: pnpm add --save-dev --save-exact @inlang/paraglide-js@${{ matrix.paraglide }}
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm check
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm test:package

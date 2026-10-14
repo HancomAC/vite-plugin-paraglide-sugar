@@ -10,6 +10,7 @@ const directories: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
   await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
@@ -214,6 +215,10 @@ describe("message manifest ESM export resolution", () => {
       "messages/hello.js": "export const hello = () => 'Hello';",
       "messages/bye.js": "export const bye = () => 'Bye';",
     });
+    // Modules older than the filesystem timestamp step are trusted by their stat alone.
+    const past = new Date(Date.now() - 60_000);
+    for (const name of ["messages.js", "messages/hello.js", "messages/bye.js"])
+      fs.utimesSync(path.join(path.dirname(entry), name), past, past);
     const cache: ManifestCache = new Map();
     const reads = vi.spyOn(fs, "readFileSync");
     const readFiles = () => reads.mock.calls.map(([file]) => path.basename(String(file)));
@@ -232,6 +237,33 @@ describe("message manifest ESM export resolution", () => {
       "hello.js",
       "messages.js",
     ]);
+  });
+
+  it("compares recently written modules whose stat did not change", async () => {
+    const entry = await fixture({
+      "messages.js": "export * from './messages/color.js';",
+      "messages/color.js": "export const color_red = () => 'Red';",
+    });
+    const file = path.join(path.dirname(entry), "messages/color.js");
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(entry, past, past);
+    const written = fs.statSync(file, { bigint: true });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Number(written.mtimeNs / 1_000_000n) + 500);
+    const cache: ManifestCache = new Map();
+    expect([...readMessageManifest(entry, cache).keys()]).toEqual(["color_red"]);
+    // A coarse timestamp can keep every stat field across a same-size rewrite.
+    await writeFile(file, "export const color_tan = () => 'Tan';");
+    const statSync = fs.statSync;
+    vi.spyOn(fs, "statSync").mockImplementation(((target: fs.PathLike, options?: never) =>
+      target === file ? written : statSync(target, options)) as typeof fs.statSync);
+    expect([...readMessageManifest(entry, cache).keys()]).toEqual(["color_tan"]);
+    // After the timestamp step has passed, the stat alone identifies the content.
+    vi.setSystemTime(Number(written.mtimeNs / 1_000_000n) + 5_000);
+    expect([...readMessageManifest(entry, cache).keys()]).toEqual(["color_tan"]);
+    const reads = vi.spyOn(fs, "readFileSync");
+    expect([...readMessageManifest(entry, cache).keys()]).toEqual(["color_tan"]);
+    expect(reads).not.toHaveBeenCalled();
   });
 
   it("still rejects referenced modules that have not been written yet", async () => {

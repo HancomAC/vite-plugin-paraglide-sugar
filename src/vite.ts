@@ -209,15 +209,19 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       return `${imports.join("\n")}\nexport const messages = Object.assign(Object.create(null), {${properties.join(",\n")}});`;
     },
     async transform(code, id) {
+      const [file, query = ""] = id.split("?", 2);
+      const parameters = new URLSearchParams(query);
       if (
-        id.includes("?") ||
-        !extensions.test(id) ||
-        !roots.some((root) => normalize(id).startsWith(root))
+        ["raw", "url", "worker", "sharedworker", "svelte"].some((key) => parameters.has(key)) ||
+        !extensions.test(file) ||
+        !roots.some((root) => normalize(file).startsWith(root))
       )
         return null;
       if (!code.includes(options.importSource) && !code.includes("\\")) return null;
       await pendingUpdate;
-      const result = transformMessages(code, id, manifest(), options);
+      // Worker entry requests contain ?worker_file&type=module. They still
+      // carry source code; the parser needs the underlying filename/extension.
+      const result = transformMessages(code, file, manifest(), options);
       if (result) {
         transformed.add(id);
         this.addWatchFile(indexFile);

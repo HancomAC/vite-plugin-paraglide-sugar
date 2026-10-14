@@ -62,6 +62,8 @@ TypeScript sources.
 
 ## Commits
 
+Maintainers preparing an npm version should follow [RELEASING.md](./RELEASING.md).
+
 Use [Conventional Commits](https://www.conventionalcommits.org/) messages, for example
 `fix: ...`, `feat: ...`, `docs: ...`, `perf: ...`, `refactor: ...`, or `test: ...`. Keep
 each commit to one coherent change.

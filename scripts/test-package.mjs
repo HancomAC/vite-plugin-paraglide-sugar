@@ -46,6 +46,9 @@ try {
   assert.ok(packedPaths.includes(packageJson.exports["."].types.replace("./", "")));
   assert.ok(packedPaths.includes("dist/runtime.js"));
   assert.ok(packedPaths.includes("dist/runtime.d.ts"));
+  for (const document of ["CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "RELEASING.md"]) {
+    assert.ok(packedPaths.includes(document), `Missing published document ${document}`);
+  }
   assert.ok(!packedPaths.some((file) => file.startsWith("src/") || file.startsWith("tests/")));
   assert.ok(!packedPaths.some((file) => file.endsWith(".ts") && !file.endsWith(".d.ts")));
 

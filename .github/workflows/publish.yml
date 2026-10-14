@@ -1,0 +1,85 @@
+name: Publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without v (the matching Git tag must exist)"
+        required: true
+        type: string
+      publish:
+        description: "Publish to npm after validation (requires npm trusted publisher setup)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Check the requested version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const version = process.env.RELEASE_VERSION;
+          assert.match(version, /^\d+\.\d+\.\d+$/);
+          assert.equal(process.env.RELEASE_REF, `refs/tags/v${version}`);
+          const metadata = JSON.parse(readFileSync('package.json', 'utf8'));
+          assert.equal(metadata.version, version);
+          assert.equal(metadata.name, 'vite-plugin-paraglide-sugar');
+          JS
+      - run: pnpm install --frozen-lockfile
+      - run: npm run release:check
+      - run: npm pack --ignore-scripts
+      - name: Preview publication
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npm publish "vite-plugin-paraglide-sugar-${RELEASE_VERSION}.tgz" --dry-run --access public
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package-${{ inputs.version }}
+          path: vite-plugin-paraglide-sugar-${{ inputs.version }}.tgz
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm install --global npm@11.21.0 --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package-${{ inputs.version }}
+      - name: Publish the verified archive using OIDC
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npm publish "vite-plugin-paraglide-sugar-${RELEASE_VERSION}.tgz" --provenance --access public

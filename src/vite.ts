@@ -304,7 +304,15 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       await pendingUpdate;
       // Worker entry requests contain ?worker_file&type=module. They still
       // carry source code; the parser needs the underlying filename/extension.
-      const result = transformMessages(code, file, manifest(), options);
+      let result;
+      try {
+        result = transformMessages(code, file, manifest(), options);
+      } catch (error) {
+        const pos = (error as { pos?: unknown }).pos;
+        // Reporting with the source offset adds a code frame in Vite's output.
+        if (typeof pos === "number") this.error(error as Error, pos);
+        throw error;
+      }
       if (result) {
         transformed.add(id);
         this.addWatchFile(indexFile);

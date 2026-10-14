@@ -177,13 +177,16 @@ export function transformMessages(
     }
     return false;
   }
+  const groupHint =
+    "Use a bounded virtual:paraglide-sugar/messages/<prefix> group for computed keys.";
   function fail(node: Node, detail: string): never {
     const before = code.slice(0, node.range[0]);
     const line = before.split("\n").length;
     const column = node.range[0] - before.lastIndexOf("\n");
-    throw new Error(
-      `[paraglide-sugar] ${id}:${line}:${column}: ${detail}. Use a static message key or a bounded virtual:paraglide-sugar/messages/<prefix> group.`,
-    );
+    // `pos` lets Vite attach the location and a code frame.
+    throw Object.assign(new Error(`[paraglide-sugar] ${id}:${line}:${column}: ${detail}`), {
+      pos: node.range[0],
+    });
   }
   function assertReadable(node: Node) {
     let target = unwrap(node);
@@ -207,13 +210,17 @@ export function transformMessages(
       (parent?.type === "UnaryExpression" && parent.operator === "delete") ||
       (parent?.type === "SvelteDirective" && parent.kind === "Binding")
     )
-      fail(node, "Message properties are read-only");
+      fail(node, "Message properties are read-only.");
   }
-  if (reexports.length) fail(reexports[0], "The message namespace cannot be re-exported");
+  if (reexports.length)
+    fail(
+      reexports[0],
+      `The message object cannot be re-exported; import it from ${JSON.stringify(importSource)} where it is used.`,
+    );
   if (dynamicImports.length)
     fail(
       dynamicImports[0],
-      `Dynamic imports of ${JSON.stringify(importSource)} are unsupported; use named imports`,
+      `Dynamic imports of ${JSON.stringify(importSource)} are unsupported; use a static named import.`,
     );
   const output = new MagicString(code);
   const rewritten = new Set<Node>();
@@ -234,7 +241,7 @@ export function transformMessages(
     if (namespace)
       fail(
         namespace,
-        `${JSON.stringify(importSource)} requires named imports; namespace and default imports are unsupported`,
+        `${JSON.stringify(importSource)} requires named imports; namespace and default imports are unsupported.`,
       );
     const removed = new Set<Node>();
     const typeOnly = new Set<Node>();
@@ -278,7 +285,7 @@ export function transformMessages(
       )
         continue;
       const variable = variablesByDefinition.get(specifier);
-      if (!variable) fail(specifier, "Cannot resolve the imported message binding");
+      if (!variable) fail(specifier, "Cannot resolve the imported message binding.");
       let needsTypeImport = false;
       function transformBinding(binding: Variable, alias?: Node): boolean {
         let preserveAliasType = false;
@@ -306,13 +313,13 @@ export function transformMessages(
               declaration?.type !== "SvelteConstTag" &&
               (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const")
             ) {
-              fail(member, "Message aliases must be immutable const bindings");
+              fail(member, "Message aliases must be immutable const bindings.");
             }
             if (parents.get(declaration)?.type === "ExportNamedDeclaration") {
-              fail(member, "The message namespace cannot be re-exported through an alias");
+              fail(member, "The message object cannot be re-exported through an alias.");
             }
             const aliasBinding = variablesByDefinition.get(member);
-            if (!aliasBinding) fail(member, "Cannot resolve the message alias binding");
+            if (!aliasBinding) fail(member, "Cannot resolve the message alias binding.");
             let marker = alias ? `(void ${reference.identifier.name}, void 0)` : "(void 0)";
             if (transformBinding(aliasBinding, member.id)) {
               // Preserve `typeof alias` through its asserted/inferred type,
@@ -324,15 +331,22 @@ export function transformMessages(
             continue;
           }
           if (member?.type !== "MemberExpression" || member.object !== receiver) {
-            fail(reference.identifier, "The imported message namespace cannot be used dynamically");
+            const name = reference.identifier.name;
+            fail(
+              reference.identifier,
+              member?.type === "VariableDeclarator" && member.init === receiver
+                ? `Destructuring the message object is unsupported; read each message as ${name}.key.`
+                : `The message object can only be read with a static key, such as ${name}.key, or through a const alias; other uses need the whole catalog. ${groupHint}`,
+            );
           }
           const key = propertyName(member);
-          if (key === undefined) fail(member, "Dynamic message keys cannot be resolved statically");
+          if (key === undefined)
+            fail(member, `Dynamic message keys cannot be resolved statically. ${groupHint}`);
           const outside = parents.get(unwrap(member));
           assertReadable(member);
           const entry = messages.get(key);
           if (!entry) {
-            if (missingKey === "error") fail(member, `Unknown message key ${JSON.stringify(key)}`);
+            if (missingKey === "error") fail(member, `Unknown message key ${JSON.stringify(key)}.`);
             missing.push({ key, position: member.range[0] });
           }
           let target = member;

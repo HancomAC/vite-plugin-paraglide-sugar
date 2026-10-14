@@ -145,6 +145,32 @@ describe("message syntax transformation", () => {
     );
   });
 
+  it.each([
+    [
+      `const { hello } = m;`,
+      /Destructuring the message object is unsupported; read each message as m\.key\.$/,
+    ],
+    [
+      `const all = Object.keys(m);`,
+      /only be read with a static key, such as m\.key.*messages\/<prefix> group/,
+    ],
+    [
+      `const read = (key: string) => m[key];`,
+      /cannot be resolved statically\. Use a bounded virtual/,
+    ],
+    [`m.hello = "changed";`, /Message properties are read-only\.$/],
+  ])("explains why %s is rejected and records its source offset", (statement, message) => {
+    const code = `import { m } from '#messages';\n${statement}`;
+    let error: { message: string; pos: number } | undefined;
+    try {
+      transformMessages(code, "/src/reject.ts", messages, options);
+    } catch (caught) {
+      error = caught as typeof error;
+    }
+    expect(error?.message).toMatch(message);
+    expect(error?.pos).toBeGreaterThan(code.indexOf("\n"));
+  });
+
   it("uses the configured export in namespace re-export and dynamic import diagnostics", () => {
     const configured = { importSource: "@example/translations", exportName: "labels" };
     expect(() =>
@@ -154,7 +180,7 @@ describe("message syntax transformation", () => {
         messages,
         configured,
       ),
-    ).toThrow(/namespace cannot be re-exported/);
+    ).toThrow(/message object cannot be re-exported; import it from "@example\/translations"/);
     expect(() =>
       transformMessages(
         `const lazy = import('@example/translations');`,
@@ -703,7 +729,7 @@ describe("Svelte source transformation", () => {
       {#if true}{@const labels = m}${usage}{/if}`;
     expect(() =>
       transformMessages(code, "/workspace/app/src/ConstEscape.svelte", messages, options),
-    ).toThrow(/read-only|cannot be used dynamically/);
+    ).toThrow(/read-only|can only be read with a static key/);
   });
 
   it("supports legacy reactive declarations and their lexical scopes", () => {

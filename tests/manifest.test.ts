@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { readMessageManifest } from "../src/manifest.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { readMessageManifest, type ManifestCache } from "../src/manifest.js";
 
 const directories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
@@ -204,6 +206,32 @@ describe("message manifest ESM export resolution", () => {
       "messages/hello.js": "export const hello = () => 'Hello'; export const m = () => 'Shadowed';",
     });
     expect([...expectNativeExports(entry).keys()]).toEqual(["hello"]);
+  });
+
+  it("re-parses only changed modules and forgets unreferenced ones with a cache", async () => {
+    const entry = await fixture({
+      "messages.js": "export * from './messages/hello.js'; export * from './messages/bye.js';",
+      "messages/hello.js": "export const hello = () => 'Hello';",
+      "messages/bye.js": "export const bye = () => 'Bye';",
+    });
+    const cache: ManifestCache = new Map();
+    const reads = vi.spyOn(fs, "readFileSync");
+    const readFiles = () => reads.mock.calls.map(([file]) => path.basename(String(file)));
+    expect([...readMessageManifest(entry, cache).keys()]).toEqual(["hello", "bye"]);
+    expect(readFiles()).toEqual(["messages.js", "hello.js", "bye.js"]);
+    reads.mockClear();
+    await writeFile(
+      path.join(path.dirname(entry), "messages/bye.js"),
+      "export const goodbye = () => 'Goodbye';",
+    );
+    expect([...readMessageManifest(entry, cache).keys()]).toEqual(["hello", "goodbye"]);
+    expect(readFiles()).toEqual(["bye.js"]);
+    await writeFile(entry, "export * from './messages/hello.js';");
+    expect([...readMessageManifest(entry, cache).keys()]).toEqual(["hello"]);
+    expect([...cache.keys()].map((file) => path.basename(file)).sort()).toEqual([
+      "hello.js",
+      "messages.js",
+    ]);
   });
 
   it("still rejects referenced modules that have not been written yet", async () => {

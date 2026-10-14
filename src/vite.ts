@@ -1,9 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parse, type TSESTree } from "@typescript-eslint/typescript-estree";
 import type { Plugin, ViteDevServer } from "vite";
 import { readMessageManifest, type ManifestCache } from "./manifest.js";
-import { mayImportMarker, transformMessages, type MessageManifest } from "./transform.js";
+import {
+  findImportUses,
+  mayImportMarker,
+  transformMessages,
+  type MessageManifest,
+} from "./transform.js";
 
 export type ParaglideSugarOptions = {
   /** App and shared workspace source roots, relative to the Vite root. */
@@ -194,48 +198,52 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     // there the access itself reports the problem.
     async buildEnd(error) {
       if (error || server) return;
-      const exportName = options.exportName ?? "m";
-      const named = (node: TSESTree.Identifier | TSESTree.StringLiteral) =>
-        (node.type === "Identifier" ? node.name : node.value) === exportName;
-      const leftovers: string[] = [];
-      for (const marker of markers) {
-        for (const importer of this.getModuleInfo(marker)?.importers ?? []) {
+      const display = (id: string) =>
+        path.relative(root, id.split("?", 1)[0]).split(path.sep).join("/");
+      const leftovers = new Set<string>();
+      // Modules and export names that expose the message object: the marker
+      // itself, then barrels that re-export it.
+      const exposed = [...markers].map((id) => ({
+        id,
+        name: options.exportName ?? "m",
+        barrel: false,
+      }));
+      const seen = new Set(exposed.map(({ id, name }) => `${id}\0${name}`));
+      for (const { id, name, barrel } of exposed) {
+        const info = this.getModuleInfo(id);
+        // Code outside the bundle can read what a build entry exports.
+        if (barrel && info?.isEntry)
+          leftovers.add(`${display(id)} exports it from the build as ${JSON.stringify(name)}`);
+        for (const importer of info?.importers ?? []) {
           const code = this.getModuleInfo(importer)?.code;
           if (!code) continue;
-          let body;
+          let uses;
           try {
-            body = parse(code, { jsDocParsingMode: "none" }).body;
+            uses = findImportUses(code);
           } catch {
             continue;
           }
-          for (const statement of body) {
-            // Find runtime imports and re-exports that expose the message object.
-            let source: string | undefined;
-            if (statement.type === "ImportDeclaration") {
-              if (
-                statement.specifiers.some(
-                  (specifier) =>
-                    specifier.type === "ImportNamespaceSpecifier" ||
-                    (specifier.type === "ImportSpecifier" && named(specifier.imported)),
-                )
-              )
-                source = statement.source.value;
-            } else if (statement.type === "ExportNamedDeclaration") {
-              if (statement.specifiers.some((specifier) => named(specifier.local)))
-                source = statement.source?.value;
-            } else if (statement.type === "ExportAllDeclaration") {
-              source = statement.source.value;
-            }
-            if (source === undefined || (await this.resolve(source, importer))?.id !== marker)
+          for (const [source, use] of uses) {
+            const aliases = use.exports
+              .filter(([imported]) => imported === name)
+              .map(([, exported]) => exported);
+            if (use.star && name !== "default") aliases.push(name);
+            const read = use.reads === true || use.reads.has(name);
+            if ((!read && !aliases.length) || (await this.resolve(source, importer))?.id !== id)
               continue;
-            const file = path.relative(root, importer.split("?", 1)[0]).split(path.sep).join("/");
-            leftovers.push(`${file} imports from ${JSON.stringify(source)}`);
+            const line = `${display(importer)} imports from ${JSON.stringify(source)}`;
+            if (read) leftovers.add(barrel ? `${line}, which re-exports it` : line);
+            for (const alias of aliases) {
+              if (seen.has(`${importer}\0${alias}`)) continue;
+              seen.add(`${importer}\0${alias}`);
+              exposed.push({ id: importer, name: alias, barrel: true });
+            }
           }
         }
       }
-      if (leftovers.length) {
+      if (leftovers.size) {
         this.error(
-          `[paraglide-sugar] The message object ${JSON.stringify(exportName)} is still imported at runtime, so its reads were not compiled and would throw "Uncompiled message access":\n${leftovers.map((line) => `  - ${line}`).join("\n")}\nImport it as ${JSON.stringify(options.importSource)} (the exact importSource) from a file inside sourceRoots (${sourceRoots.join(", ")}).`,
+          `[paraglide-sugar] The message object ${JSON.stringify(options.exportName ?? "m")} is still used at runtime, so its reads were not compiled and would throw "Uncompiled message access":\n${[...leftovers].map((line) => `  - ${line}`).join("\n")}\nImport it as ${JSON.stringify(options.importSource)} (the exact importSource) from a file inside sourceRoots (${sourceRoots.join(", ")}).`,
         );
       }
     },

@@ -366,10 +366,14 @@ and `.svelte`, including `.svelte.js` and `.svelte.ts` modules. Other file types
 
 ### Build-time check for uncompiled imports
 
-During `vite build`, if any module still imports the message object at runtime, the build
+During `vite build`, if any module still uses the message object at runtime, the build
 fails and names the importing file and specifier. This happens when the object is
 imported through a different specifier, such as a relative `./messages.js` or
-`$lib/messages`, or from a file outside `sourceRoots`.
+`$lib/messages`, or from a file outside `sourceRoots`. The check follows re-exports, so a
+read through a barrel file such as `export * from "./messages.js"` also fails. Imports
+that never read the object, such as other exports of the marker module, unused imports,
+or a barrel whose importers use only its other exports, are allowed. A build entry
+that exports the object also fails. Dynamic `import()` is not checked.
 
 The development server and Vitest do not run this check. There, an untransformed access
 throws `Uncompiled message access <key>` when it runs.

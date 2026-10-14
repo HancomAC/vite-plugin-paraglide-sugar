@@ -9,7 +9,12 @@ import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { readMessageManifest } from "../src/manifest.js";
 import * as runtime from "../src/runtime.js";
-import { mayImportMarker, transformMessages, type TransformOptions } from "../src/transform.js";
+import {
+  findImportUses,
+  mayImportMarker,
+  transformMessages,
+  type TransformOptions,
+} from "../src/transform.js";
 
 const options: TransformOptions = { importSource: "#messages" };
 
@@ -444,6 +449,52 @@ export { values }`);
     ]) {
       expect(mayImportMarker(code, "#messages")).toBe(true);
     }
+  });
+
+  it("finds runtime reads and re-exports of imported bindings in compiled code", () => {
+    const uses = findImportUses(`
+      import { m, other } from "./named.js";
+      import { m as kept } from "./unused.js";
+      import * as ns from "./member.js";
+      import * as escaped from "./escaped.js";
+      import def, { m as local } from "./reexport.js";
+      export * from "./star.js";
+      export * as all from "./whole.js";
+      export { m as text, other as more } from "./named-reexport.js";
+      export { local as alias };
+      export default def;
+      export const read = () => [m.hello, ns.helper(), ns?.["m"], escaped[key], use(escaped)];
+    `);
+    const summary = Object.fromEntries(
+      [...uses].map(([source, { reads, exports, star }]) => [
+        source,
+        { reads: reads === true ? true : [...reads], exports, star },
+      ]),
+    );
+    expect(summary).toEqual({
+      "./named.js": { reads: ["m"], exports: [], star: false },
+      "./unused.js": { reads: [], exports: [], star: false },
+      "./member.js": { reads: ["helper", "m"], exports: [], star: false },
+      "./escaped.js": { reads: true, exports: [], star: false },
+      "./reexport.js": {
+        reads: [],
+        exports: [
+          ["default", "default"],
+          ["m", "alias"],
+        ],
+        star: false,
+      },
+      "./star.js": { reads: [], exports: [], star: true },
+      "./whole.js": { reads: true, exports: [], star: false },
+      "./named-reexport.js": {
+        reads: [],
+        exports: [
+          ["m", "text"],
+          ["other", "more"],
+        ],
+        star: false,
+      },
+    });
   });
 
   it("keeps import attributes on the retained marker import", () => {

@@ -422,3 +422,87 @@ export function transformMessages(
     missing,
   };
 }
+
+/** How compiled code uses the exports of one imported module. */
+export type ImportUse = {
+  /** Export names read at runtime; `true` when any export can be reached. */
+  reads: Set<string> | true;
+  /** Re-exported names as `[imported, exported]` pairs. */
+  exports: [string, string][];
+  /** Whether `export * from` passes every named export on. */
+  star: boolean;
+};
+
+/**
+ * Find which exports of each imported module compiled JavaScript reads at
+ * runtime or passes on, keyed by import specifier. Unreferenced imports, such
+ * as those kept for a TypeScript-only `typeof`, count as neither.
+ */
+export function findImportUses(code: string) {
+  const { ast, scopeManager } = typescriptParser.parseForESLint(code, { sourceType: "module" });
+  const parents = new WeakMap<object, Node>();
+  (function walk(node: Node) {
+    for (const key of visitorKeys[node.type] ?? []) {
+      const child = node[key];
+      for (const item of Array.isArray(child) ? child : [child]) {
+        if (!item?.type) continue;
+        parents.set(item, node);
+        walk(item);
+      }
+    }
+  })(ast as unknown as Node);
+  const uses = new Map<string, ImportUse>();
+  const use = (source: string) => {
+    let entry = uses.get(source);
+    if (!entry) uses.set(source, (entry = { reads: new Set(), exports: [], star: false }));
+    return entry;
+  };
+  const name = (node: Node) => (node.type === "Identifier" ? node.name : String(node.value));
+  for (const statement of ast.body as unknown as Node[]) {
+    if (statement.type === "ExportAllDeclaration") {
+      const entry = use(statement.source.value);
+      // `export * as all` exposes the whole namespace object.
+      if (statement.exported) entry.reads = true;
+      else entry.star = true;
+    } else if (statement.type === "ExportNamedDeclaration" && statement.source) {
+      const entry = use(statement.source.value);
+      for (const specifier of statement.specifiers as Node[])
+        entry.exports.push([name(specifier.local), name(specifier.exported)]);
+    } else if (statement.type === "ImportDeclaration") {
+      const entry = use(statement.source.value);
+      for (const specifier of statement.specifiers as Node[]) {
+        // A namespace binding has no single imported name.
+        const imported =
+          specifier.type === "ImportSpecifier"
+            ? name(specifier.imported)
+            : specifier.type === "ImportDefaultSpecifier"
+              ? "default"
+              : undefined;
+        const [variable] = scopeManager.getDeclaredVariables(specifier as never);
+        for (const { identifier } of variable?.references ?? []) {
+          const parent = parents.get(identifier);
+          let read: string | true | undefined = imported;
+          if (parent?.type === "ExportSpecifier" && parent.local === identifier) {
+            if (imported !== undefined) {
+              entry.exports.push([imported, name(parent.exported)]);
+              continue;
+            }
+            read = true;
+          } else if (parent?.type === "ExportDefaultDeclaration" && imported !== undefined) {
+            entry.exports.push([imported, "default"]);
+            continue;
+          } else if (imported === undefined) {
+            // Static member reads of a namespace reach only that export.
+            read =
+              (parent?.type === "MemberExpression" && parent.object === identifier
+                ? propertyName(parent)
+                : undefined) ?? true;
+          }
+          if (read === true) entry.reads = true;
+          else if (entry.reads !== true) entry.reads.add(read!);
+        }
+      }
+    }
+  }
+  return uses;
+}

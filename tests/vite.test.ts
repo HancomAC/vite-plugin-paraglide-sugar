@@ -446,17 +446,62 @@ describe("uncompiled marker imports", () => {
     120_000,
   );
 
-  it("fails for namespace imports and re-exports of the marker module", async () => {
+  it("fails for reads through barrels and namespaces and for exposing it from the build", async () => {
     const f = await fixture();
-    await f.write("src/relay.js", `export { m } from './i18n.js';`);
+    await f.write("lib/barrel.js", `export * from '../src/i18n.js';`);
+    await f.write("lib/relay.js", `export { m as text } from './barrel.js';`);
+    await f.write(
+      "lib/member.js",
+      `import * as i18n from '../src/i18n.js'; export const t = () => i18n.m.hello;`,
+    );
     await f.write("src/everything.js", `import * as all from './i18n.js'; export { all };`);
     const entry = await f.write(
       "src/entry.js",
-      `export { m } from './relay.js'; export { all } from './everything.js';`,
+      `import { text } from '../lib/relay.js';
+       export { t } from '../lib/member.js';
+       export { all } from './everything.js';
+       export { m } from '../lib/barrel.js';
+       export const value = () => text.hello;`,
     );
     const failure = bundle(f, entry);
-    await expect(failure).rejects.toThrow(/src\/relay\.js imports from "\.\/i18n\.js"/);
+    await expect(failure).rejects.toThrow(
+      /src\/entry\.js imports from "\.\.\/lib\/relay\.js", which re-exports it/,
+    );
+    await expect(failure).rejects.toThrow(/lib\/member\.js imports from "\.\.\/src\/i18n\.js"/);
     await expect(failure).rejects.toThrow(/src\/everything\.js imports from "\.\/i18n\.js"/);
+    await expect(failure).rejects.toThrow(/src\/entry\.js exports it from the build as "m"/);
+  }, 120_000);
+
+  it("allows imports, namespaces, and barrels that never read the message object", async () => {
+    const f = await fixture();
+    await f.write(
+      "src/i18n.js",
+      `export const m = new Proxy({}, { get() { throw new Error('Runtime catalog access'); } });
+       export const helper = () => 'helper';`,
+    );
+    await f.write(
+      "lib/barrel.js",
+      `export * from '../src/i18n.js'; export const util = () => 'util';`,
+    );
+    await f.write(
+      "lib/namespace.js",
+      `import * as i18n from '../src/i18n.js'; export const h = () => i18n.helper();`,
+    );
+    await f.write(
+      "lib/unused.js",
+      `import { m } from '../src/i18n.js'; export const u = () => 'unused';`,
+    );
+    const entry = await f.write(
+      "src/entry.js",
+      `import { util, helper } from '../lib/barrel.js';
+       import { h } from '../lib/namespace.js';
+       import { u } from '../lib/unused.js';
+       import { m } from '#translations';
+       export const value = () => [util(), helper(), h(), u(), m.hello];`,
+    );
+    const chunks = await bundle(f, entry);
+    const { value } = await importBundle(chunks.find((chunk) => chunk.isEntry)!.code);
+    expect(value()).toEqual(["util", "helper", "helper", "unused", "안녕"]);
   }, 120_000);
 
   it("allows other runtime exports and type-only imports of the marker module", async () => {

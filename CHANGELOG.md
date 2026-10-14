@@ -19,7 +19,7 @@ Initial public release.
   dynamic keys.
 - Build-time errors for unknown message keys and for message access that cannot be
   resolved statically.
-- A build-time check that fails `vite build` when a module still imports the message
-  marker at runtime.
+- A build-time check that fails `vite build` when a module still reads the message object
+  through an import the plugin did not compile, including through re-exports.
 - Dev-server invalidation of affected modules and virtual groups across all Vite
   environments when generated message modules change.

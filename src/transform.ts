@@ -50,6 +50,9 @@ const typescriptParser = {
   },
 };
 const identifierName = /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u;
+// Keywords cannot contain escapes, so an escaped module specifier always
+// follows a literal `from` or `import(`.
+const escapedSpecifier = /(?:\bfrom|\bimport\s*\()\s*(["'`])(?:(?!\1)[^\\\r\n])*\\/;
 const transparentExpressions = new Set([
   "TSAsExpression",
   "TSTypeAssertion",
@@ -75,6 +78,11 @@ function propertyName(node: Node): string | undefined {
   return undefined;
 }
 
+/** Cheap prefilter: false means the source cannot import the marker module. */
+export function mayImportMarker(code: string, importSource: string) {
+  return code.includes(importSource) || escapedSpecifier.test(code);
+}
+
 /**
  * Resolve references to the actual imported binding, including Svelte template
  * scopes. Rewriting source ranges preserves comments, literals, and formatting.
@@ -88,8 +96,7 @@ export function transformMessages(
   const { importSource, exportName = "m", missingKey = "error" } = options;
   if (!importSource) throw new Error("[paraglide-sugar] importSource must not be empty.");
   if (!exportName) throw new Error("[paraglide-sugar] exportName must not be empty.");
-  // An escaped module specifier can omit the literal spelling of importSource.
-  if (!code.includes(importSource) && !code.includes("\\")) return null;
+  if (!mayImportMarker(code, importSource)) return null;
   const parserOptions = {
     filePath: id,
     sourceType: "module" as const,

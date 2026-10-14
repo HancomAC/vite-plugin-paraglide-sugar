@@ -9,7 +9,7 @@ import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { readMessageManifest } from "../src/manifest.js";
 import * as runtime from "../src/runtime.js";
-import { transformMessages, type TransformOptions } from "../src/transform.js";
+import { mayImportMarker, transformMessages, type TransformOptions } from "../src/transform.js";
 
 const options: TransformOptions = { importSource: "#messages" };
 
@@ -398,6 +398,26 @@ export { values }`);
     const code = `export { getLocale } from '#messages';`;
     const result = transformMessages(code, "/workspace/app/src/helpers.ts", messages, options);
     expect(execute(result?.code ?? code).exports.getLocale()).toBe("ko");
+  });
+
+  it("skips sources whose only backslashes are outside module specifiers", () => {
+    for (const code of [
+      String.raw`const pattern = /\d+/; const text = "a\nb"; Array.from("\t");`,
+      String.raw`const label = "data from \"x\""; import("./a.js");`,
+    ]) {
+      expect(mayImportMarker(code, "#messages")).toBe(false);
+      // Unparseable code proves that no parser ran.
+      expect(
+        transformMessages(`${code} not valid syntax`, "/src/a.ts", messages, options),
+      ).toBeNull();
+    }
+    for (const code of [
+      String.raw`import { m } from '\u0023messages';`,
+      String.raw`export { m } from"\u0023messages";`,
+      String.raw`const load = () => import ( ` + "`\\u0023messages`" + ` );`,
+    ]) {
+      expect(mayImportMarker(code, "#messages")).toBe(true);
+    }
   });
 
   it("ignores a same-named import from an unrelated module", () => {

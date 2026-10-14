@@ -266,6 +266,16 @@ describe("Vite message transform lifecycle", () => {
     }
   });
 
+  it("never transforms generated Paraglide output inside a source root", async () => {
+    const f = await fixture();
+    const { call } = pluginHarness(f, { sourceRoots: ["."] });
+    const source = `import { m } from '#translations'; export const value = m.hello;`;
+    expect((await call("transform", source, path.join(f.root, "src/read.ts")))?.code).toContain(
+      "messages/hello.js",
+    );
+    expect(await call("transform", source, path.join(f.outdir, "read.js"))).toBeNull();
+  });
+
   it("waits for preceding asynchronous Paraglide generation on a clean build", async () => {
     const f = await fixture();
     await rm(path.join(f.outdir, "messages"), { recursive: true });

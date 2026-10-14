@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
 import { readMessageManifest } from "./manifest.js";
-import { transformMessages, type MessageManifest } from "./transform.js";
+import { mayImportMarker, transformMessages, type MessageManifest } from "./transform.js";
 
 export type ParaglideSugarOptions = {
   /** App and shared workspace source roots, relative to the Vite root. */
@@ -38,6 +38,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     throw new Error("[paraglide-sugar] sourceRoots must contain at least one source directory.");
   let generatedDirectory = path.resolve(options.outdir);
   let roots = sourceRoots.map((root) => normalize(path.resolve(root)) + "/");
+  let generatedRoot = normalize(generatedDirectory) + "/";
   let indexFile = path.join(generatedDirectory, options.messagesEntry ?? "messages.js");
   let messages: MessageManifest | undefined;
   const transformed = new Set<string>();
@@ -141,8 +142,8 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     name: "vite-plugin-paraglide-sugar",
     enforce: "pre",
     configResolved(config) {
-      roots = sourceRoots.map((root) => {
-        let resolved = path.resolve(config.root, root);
+      const modulePrefix = (directory: string) => {
+        let resolved = path.resolve(config.root, directory);
         if (!config.resolve?.preserveSymlinks) {
           try {
             resolved = fs.realpathSync(resolved);
@@ -153,7 +154,10 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
           }
         }
         return normalize(resolved) + "/";
-      });
+      };
+      roots = sourceRoots.map(modulePrefix);
+      // Paraglide output often sits inside a source root, such as src/lib/paraglide.
+      generatedRoot = modulePrefix(options.outdir);
       generatedDirectory = path.resolve(config.root, options.outdir);
       indexFile = path.join(generatedDirectory, options.messagesEntry ?? "messages.js");
     },
@@ -223,13 +227,15 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     async transform(code, id) {
       const [file, query = ""] = id.split("?", 2);
       const parameters = new URLSearchParams(query);
+      const normalized = normalize(file);
       if (
         ["raw", "url", "worker", "sharedworker", "svelte"].some((key) => parameters.has(key)) ||
         !extensions.test(file) ||
-        !roots.some((root) => normalize(file).startsWith(root))
+        !roots.some((root) => normalized.startsWith(root)) ||
+        normalized.startsWith(generatedRoot)
       )
         return null;
-      if (!code.includes(options.importSource) && !code.includes("\\")) return null;
+      if (!mayImportMarker(code, options.importSource)) return null;
       await pendingUpdate;
       // Worker entry requests contain ?worker_file&type=module. They still
       // carry source code; the parser needs the underlying filename/extension.

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
-import { readMessageManifest } from "./manifest.js";
+import { readMessageManifest, type ManifestCache } from "./manifest.js";
 import { mayImportMarker, transformMessages, type MessageManifest } from "./transform.js";
 
 export type ParaglideSugarOptions = {
@@ -41,6 +41,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
   let generatedRoot = normalize(generatedDirectory) + "/";
   let indexFile = path.join(generatedDirectory, options.messagesEntry ?? "messages.js");
   let messages: MessageManifest | undefined;
+  const scans: ManifestCache = new Map();
   const transformed = new Set<string>();
   const groups = new Set<string>();
   let server: ViteDevServer | undefined;
@@ -58,7 +59,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
         : fs.existsSync(path.join(generatedDirectory, "messages.js"))
           ? path.join(generatedDirectory, "messages.js")
           : path.join(generatedDirectory, "messages/_index.js");
-      messages = readMessageManifest(indexFile);
+      messages = readMessageManifest(indexFile, scans);
     }
     return messages;
   }
@@ -91,7 +92,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     try {
       // The compiler writes its index and individual modules separately. Swap
       // the manifest only after every referenced module can be read and parsed.
-      messages = readMessageManifest(indexFile);
+      messages = readMessageManifest(indexFile, scans);
     } catch (cause) {
       if (++refreshAttempts < 30) {
         updateTimer = setTimeout(refreshGeneratedMessages, 100);

@@ -5,9 +5,13 @@ import type { MessageExport } from "./transform.js";
 
 /** Read real ESM exports; Paraglide file stems are not message identifiers. */
 export function readMessageManifest(entryFile: string): Map<string, MessageExport> {
-  const cache = new Map<string, Map<string, MessageExport>>();
+  type ResolvedExport = { message: MessageExport; binding: string };
+  // An ambiguous name must survive through parent star exports, even though it
+  // will not be exposed in the final message manifest.
+  type ModuleExports = Map<string, ResolvedExport | undefined>;
+  const cache = new Map<string, ModuleExports>();
   const active = new Set<string>();
-  function read(file: string): Map<string, MessageExport> {
+  function read(file: string): ModuleExports {
     const cached = cache.get(file);
     if (cached) return cached;
     if (active.has(file))
@@ -30,17 +34,20 @@ export function readMessageManifest(entryFile: string): Map<string, MessageExpor
         `[paraglide-sugar] Invalid generated module ${file}: ${ts.flattenDiagnosticMessageText(diagnostics[0].messageText, "\n")}`,
       );
     }
-    const entries = new Map<string, MessageExport>();
-    const namespaces = new Map<string, Map<string, MessageExport>>();
-    const direct = (name: string) => ({
-      source: file.split(path.sep).join("/"),
-      exportName: name,
+    const entries: ModuleExports = new Map();
+    const stars: ModuleExports = new Map();
+    const namespaces = new Map<string, ModuleExports>();
+    const direct = (name: string, localName = name): ResolvedExport => ({
+      message: { source: file.split(path.sep).join("/"), exportName: name },
+      // Different exported aliases can identify the same local binding. Comparing
+      // export names would incorrectly reject valid diamond re-exports.
+      binding: `${file}\0${localName}`,
     });
     for (const statement of ast.statements) {
       if (ts.isExportDeclaration(statement)) {
         if (statement.isTypeOnly) continue;
         const specifier = statement.moduleSpecifier;
-        let child: Map<string, MessageExport> | undefined;
+        let child: ModuleExports | undefined;
         if (specifier && ts.isStringLiteral(specifier)) {
           if (!specifier.text.startsWith(".")) {
             throw new Error(
@@ -50,13 +57,17 @@ export function readMessageManifest(entryFile: string): Map<string, MessageExpor
           child = read(path.resolve(path.dirname(file), specifier.text));
         }
         if (!statement.exportClause) {
-          for (const [key, value] of child ?? []) if (key !== "default") entries.set(key, value);
+          for (const [key, value] of child ?? []) {
+            if (key === "default") continue;
+            if (!stars.has(key)) stars.set(key, value);
+            else if (stars.get(key)?.binding !== value?.binding) stars.set(key, undefined);
+          }
         } else if (ts.isNamedExports(statement.exportClause)) {
           for (const element of statement.exportClause.elements) {
             if (element.isTypeOnly) continue;
             const exportedName = element.name.text;
             const importedName = element.propertyName?.text ?? exportedName;
-            const entry = child ? child.get(importedName) : direct(exportedName);
+            const entry = child ? child.get(importedName) : direct(exportedName, importedName);
             if (!entry) {
               throw new Error(
                 `[paraglide-sugar] Missing export ${JSON.stringify(importedName)} re-exported by ${file}`,
@@ -88,6 +99,11 @@ export function readMessageManifest(entryFile: string): Map<string, MessageExpor
         }
       }
     }
+    // Explicit exports take precedence regardless of declaration order. Namespace
+    // exports are explicit too, but are not callable message entries.
+    for (const [key, value] of stars) {
+      if (!entries.has(key) && !namespaces.has(key)) entries.set(key, value);
+    }
     if (!entries.size && namespaces.size) {
       if (namespaces.size !== 1) {
         throw new Error(`[paraglide-sugar] Ambiguous namespace-only message barrel in ${file}`);
@@ -105,7 +121,10 @@ export function readMessageManifest(entryFile: string): Map<string, MessageExpor
     cache.set(file, entries);
     return entries;
   }
-  const messages = read(path.resolve(entryFile));
+  const messages = new Map<string, MessageExport>();
+  for (const [key, entry] of read(path.resolve(entryFile))) {
+    if (entry) messages.set(key, entry.message);
+  }
   // Importing a locale-module barrel cannot provide the route-level splitting
   // promised by this plugin. Fail clearly instead of silently losing that benefit.
   for (const entry of messages.values()) {

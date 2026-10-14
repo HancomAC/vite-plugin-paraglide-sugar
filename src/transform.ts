@@ -276,7 +276,10 @@ export function transformMessages(
             member.id.type === "Identifier"
           ) {
             const declaration = parents.get(member);
-            if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") {
+            if (
+              declaration?.type !== "SvelteConstTag" &&
+              (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const")
+            ) {
               fail(member, "Message aliases must be immutable const bindings");
             }
             if (parents.get(declaration)?.type === "ExportNamedDeclaration") {

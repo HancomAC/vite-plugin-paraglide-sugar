@@ -1,8 +1,10 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { SourceMapConsumer } from "source-map-js";
 import { compile } from "svelte/compiler";
+import { render } from "svelte/server";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { readMessageManifest } from "../src/manifest.js";
@@ -33,6 +35,7 @@ function execute(code: string, locale = { value: "ko" }) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
   const modules: Record<string, unknown> = {
+    "svelte/internal/server": createRequire(import.meta.url)("svelte/internal/server"),
     "vite-plugin-paraglide-sugar/runtime": runtime,
     "/catalog/messages/hello.js": { hello: () => (locale.value === "ko" ? "안녕" : "Hello") },
     "/catalog/messages/welcome.js": {
@@ -629,6 +632,60 @@ label: alias.hello._()`);
 });
 
 describe("Svelte source transformation", () => {
+  it("renders chained template const aliases while preserving nested shadows and branches", () => {
+    const code = `<script lang="ts">
+      import { m } from '#messages';
+      const scriptAlias = m;
+      let { name = 'Ada', show = true } = $props();
+      const rows = [{ hello: 'each-local' }];
+    </script>
+    {#if show}
+      {@const labels = m}
+      {@const chained = labels}
+      {@const fromScript = scriptAlias}
+      <p>{labels.hello}|{chained.welcome._({ name }, { locale: 'en' })}|{fromScript.hello}</p>
+      {#each rows as labels}<span>{labels.hello}</span>{/each}
+      {#if true}
+        {@const chained = { hello: 'const-local' }}
+        <strong>{chained.hello}</strong>
+      {/if}
+      <em>{chained.hello}</em>
+    {:else}
+      <small>{m.hello}</small>
+    {/if}`;
+    const result = transform(code, "/workspace/app/src/ConstAliases.svelte");
+    expect(result.code).not.toContain("#messages");
+    expect(() =>
+      compile(result.code, { filename: "ConstAliases.svelte", generate: "client" }),
+    ).not.toThrow();
+    const compiled = compile(result.code, {
+      filename: "ConstAliases.svelte",
+      generate: "server",
+    });
+    const Component = execute(compiled.js.code).exports.default;
+    const body = render(Component, { props: { name: "Grace", show: true } }).body;
+    expect(body).toContain("<p>안녕|en:Grace|안녕</p>");
+    expect(body).toContain("<span>each-local</span>");
+    expect(body).toContain("<strong>const-local</strong>");
+    expect(body).toContain("<em>안녕</em>");
+    const otherBranch = render(Component, { props: { show: false } }).body;
+    expect(otherBranch).toContain("<small>안녕</small>");
+    expect(otherBranch).not.toContain("<p>");
+  });
+
+  it.each([
+    `<button onclick={() => { labels.hello = 'changed'; }}>Change</button>`,
+    `<button onclick={() => { labels = {}; }}>Change</button>`,
+    `<p>{Object.keys(labels)}</p>`,
+    `{@const chained = labels}<p>{consume(chained)}</p>`,
+  ])("rejects mutation and namespace escapes through template const aliases: %s", (usage) => {
+    const code = `<script>import { m } from '#messages';</script>
+      {#if true}{@const labels = m}${usage}{/if}`;
+    expect(() =>
+      transformMessages(code, "/workspace/app/src/ConstEscape.svelte", messages, options),
+    ).toThrow(/read-only|cannot be used dynamically/);
+  });
+
   it("supports legacy reactive declarations and their lexical scopes", () => {
     const code = `<script lang="ts">
       import { m } from '#messages';

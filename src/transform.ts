@@ -322,6 +322,29 @@ export function transformMessages(
           // throws; only the catalog property lookup is compiled away.
           if (alias) replacement = `(void ${reference.identifier.name}, ${replacement})`;
           if (!rewritten.has(target)) {
+            if (replacement.startsWith("(")) {
+              // A leading parenthesis can join a previously separate statement
+              // (for example, `effect()\nalias.key._()`). Protect only expression
+              // statements in statement lists, never a bare if/loop/label body.
+              let statement = target;
+              let parent = parents.get(statement);
+              while (
+                statement.type !== "ExpressionStatement" &&
+                parent?.range[0] === target.range[0]
+              ) {
+                statement = parent;
+                parent = parents.get(statement);
+              }
+              if (
+                statement.type === "ExpressionStatement" &&
+                parent &&
+                (parsed.visitorKeys[parent.type] ?? []).some(
+                  (key) => Array.isArray(parent[key]) && parent[key].includes(statement),
+                )
+              ) {
+                replacement = `;${replacement}`;
+              }
+            }
             output.overwrite(target.range[0], target.range[1], replacement);
             rewritten.add(target);
           }
@@ -344,7 +367,7 @@ export function transformMessages(
     output.overwrite(
       declaration.range[0],
       declaration.range[1],
-      [retained, ...injected].filter(Boolean).join("\n"),
+      [retained, ...injected].filter(Boolean).join("\n") || ";",
     );
   }
   if (!output.hasChanged()) return null;

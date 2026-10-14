@@ -205,6 +205,29 @@ describe("message syntax transformation", () => {
     }
   });
 
+  it("preserves semicolonless statements when a missing key becomes undefined", () => {
+    const result = transform(
+      `import { m } from '#messages'
+const events = []
+events.push('before')
+m.absent?.()
+events.push('after')
+export { events }`,
+      undefined,
+      { missingKey: "undefined" },
+    );
+    expect(execute(result.code).exports.events).toEqual(["before", "after"]);
+  });
+
+  it("keeps a statement boundary when removing an unused import", () => {
+    const result = transform(`const values = [1]
+import { m } from '#messages'
+[2].forEach(value => values.push(value))
+export { values }`);
+    expect(execute(result.code).exports.values).toEqual([1, 2]);
+    expect(result.code).not.toContain("#messages");
+  });
+
   it("resolves aliased imports, static computed keys, and TypeScript wrappers", () => {
     const result = transform(`
 			import { m as translations } from '#messages';
@@ -397,6 +420,48 @@ describe("message syntax transformation", () => {
 });
 
 describe("constant message aliases", () => {
+  it("preserves semicolonless standalone alias reads and calls", () => {
+    const result = transform(`import { m } from '#messages'
+const alias = m
+const events = []
+events.push('before')
+alias.hello._()
+events.push('between')
+alias.hello
+events.push('after')
+export { events }`);
+    let reads = 0;
+    const { exports } = execute(result.code, {
+      get value() {
+        reads++;
+        return "ko";
+      },
+    });
+    expect(exports.events).toEqual(["before", "between", "after"]);
+    expect(reads).toBe(2);
+  });
+
+  it("keeps alias reads attached to their conditional and loop bodies", () => {
+    const result = transform(`import { m } from '#messages'
+const alias = m
+export let count = 0
+if (false) alias.hello._()
+else count++
+for (let i = 0; i < 2; i++) alias.hello._()
+while (count < 2) alias.hello._(), count++
+do alias.hello._(); while (false)
+label: alias.hello._()`);
+    let reads = 0;
+    const { exports } = execute(result.code, {
+      get value() {
+        reads++;
+        return "ko";
+      },
+    });
+    expect(exports.count).toBe(2);
+    expect(reads).toBe(5);
+  });
+
   it("resolves static accesses through cast and nested const aliases with live locale values", () => {
     const result = transform(
       `

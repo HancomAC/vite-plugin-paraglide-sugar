@@ -87,6 +87,7 @@ function pluginHarness(f: Fixture, options: Partial<Parameters<typeof paraglideS
   });
   const context = {
     addWatchFile: vi.fn(),
+    resolve: vi.fn(async () => null),
     warn: vi.fn(),
     error: (message: string): never => {
       throw new Error(message);
@@ -413,6 +414,59 @@ describe("Vite message transform lifecycle", () => {
     expect(watcher.listenerCount("add")).toBe(0);
     expect(watcher.listenerCount("unlink")).toBe(0);
   });
+});
+
+describe("uncompiled marker imports", () => {
+  it.each([
+    ["a relative specifier", "src/entry.js", "./i18n.js"],
+    ["a file outside sourceRoots", "lib/entry.js", "#translations"],
+  ])(
+    "fails the build for %s and names the importer",
+    async (_, relative, specifier) => {
+      const f = await fixture();
+      const entry = await f.write(
+        relative,
+        `import { m } from '${specifier}'; export const value = () => m.hello;`,
+      );
+      await expect(bundle(f, entry)).rejects.toThrow(
+        new RegExp(`${relative} imports from "${specifier}"[\\s\\S]*exact importSource`),
+      );
+    },
+    120_000,
+  );
+
+  it("fails for namespace imports and re-exports of the marker module", async () => {
+    const f = await fixture();
+    await f.write("src/relay.js", `export { m } from './i18n.js';`);
+    await f.write("src/everything.js", `import * as all from './i18n.js'; export { all };`);
+    const entry = await f.write(
+      "src/entry.js",
+      `export { m } from './relay.js'; export { all } from './everything.js';`,
+    );
+    const failure = bundle(f, entry);
+    await expect(failure).rejects.toThrow(/src\/relay\.js imports from "\.\/i18n\.js"/);
+    await expect(failure).rejects.toThrow(/src\/everything\.js imports from "\.\/i18n\.js"/);
+  }, 120_000);
+
+  it("allows other runtime exports and type-only imports of the marker module", async () => {
+    const f = await fixture();
+    await f.write(
+      "src/i18n.js",
+      `export const m = new Proxy({}, { get() { throw new Error('Runtime catalog access'); } });
+       export const helper = () => 'helper';`,
+    );
+    await f.write("src/types.ts", `import type { m } from './i18n.js'; export type M = typeof m;`);
+    const entry = await f.write(
+      "src/entry.ts",
+      `import { helper } from './i18n.js';
+       import { m } from '#translations';
+       import type { M } from './types.js';
+       export const value = (): [string, string, M | undefined] => [helper(), m.hello, undefined];`,
+    );
+    const chunks = await bundle(f, entry);
+    const { value } = await importBundle(chunks.find((chunk) => chunk.isEntry)!.code);
+    expect(value().slice(0, 2)).toEqual(["helper", "안녕"]);
+  }, 120_000);
 });
 
 describe("bundled static messages", () => {

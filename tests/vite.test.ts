@@ -237,6 +237,17 @@ describe("Vite message transform lifecycle", () => {
     ).toBeNull();
   });
 
+  it("reports transform errors with a code frame", async () => {
+    const f = await fixture();
+    const entry = await f.write(
+      "src/entry.js",
+      `import { m } from '#translations';\nexport const value = () => m.absent;\n`,
+    );
+    await expect(bundle(f, entry)).rejects.toThrow(
+      /Unknown message key "absent"\.\n1: import[^\n]*\n2: export const value = \(\) => m\.absent;\n\s+\^/,
+    );
+  }, 120_000);
+
   it("discovers the public generated entry and allows an explicit relative entry", async () => {
     const f = await fixture();
     await f.write("generated/messages.js", `export * from './messages/hello.js';`);

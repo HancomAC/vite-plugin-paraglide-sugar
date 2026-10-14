@@ -327,11 +327,24 @@ describe("Vite message transform lifecycle", () => {
     const invalidateModule = vi.fn();
     const send = vi.fn();
     const httpServer = new EventEmitter();
+    const names = ["client", "ssr", "worker"];
+    const environments = Object.fromEntries(
+      names.map((name) => [
+        name,
+        {
+          moduleGraph: {
+            getModuleById: (key: string) => nodes.get(key),
+            invalidateModule: (node: unknown) => invalidateModule(name, node),
+          },
+          hot: { send: (payload: unknown) => send(name, payload) },
+        },
+      ]),
+    );
     call("configureServer", {
       watcher,
       httpServer,
-      ws: { send },
-      moduleGraph: { getModuleById: (key: string) => nodes.get(key), invalidateModule },
+      ws: { send: (payload: unknown) => send("ws", payload) },
+      environments,
     });
     await call("transform", `import { m } from '#translations'; export const value = m.hello;`, id);
     await call("load", virtualId);
@@ -377,9 +390,13 @@ describe("Vite message transform lifecycle", () => {
     call("handleHotUpdate", { file: f.indexFile, modules: [] });
     await vi.advanceTimersByTimeAsync(110);
     expect((await pending).code).toContain("color_green.js");
-    expect(send).toHaveBeenCalledExactlyOnceWith({ type: "full-reload" });
-    expect(invalidateModule).toHaveBeenCalledWith(reader);
-    expect(invalidateModule).toHaveBeenCalledWith(group);
+    expect(send.mock.calls).toEqual(
+      names.map((name) => [name, { type: "full-reload", path: "*" }]),
+    );
+    for (const name of names) {
+      expect(invalidateModule).toHaveBeenCalledWith(name, reader);
+      expect(invalidateModule).toHaveBeenCalledWith(name, group);
+    }
     expect(await call("load", virtualId)).toContain("color_green");
     expect(
       call("handleHotUpdate", { file: path.join(f.root, "src/unrelated.js"), modules: [] }),
@@ -391,7 +408,7 @@ describe("Vite message transform lifecycle", () => {
     watcher.emit("unlink", path.join(f.outdir, "messages/color_green.js"));
     await vi.advanceTimersByTimeAsync(110);
     expect(await call("load", virtualId)).not.toContain("color_green");
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(names.length * 2);
     httpServer.emit("close");
     expect(watcher.listenerCount("add")).toBe(0);
     expect(watcher.listenerCount("unlink")).toBe(0);

@@ -72,14 +72,18 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       relative.endsWith(".js")
     );
   }
-  function invalidate() {
-    if (server) {
+  function reload() {
+    if (!server) return;
+    // server.moduleGraph spans only the client and SSR environments. Custom
+    // environments, such as worker runtimes, keep their own module graphs.
+    for (const environment of Object.values(server.environments)) {
       for (const id of [...transformed, ...groups]) {
-        const module = server.moduleGraph.getModuleById(id);
-        if (module) {
-          server.moduleGraph.invalidateModule(module);
-        }
+        const module = environment.moduleGraph.getModuleById(id);
+        if (module) environment.moduleGraph.invalidateModule(module);
       }
+    }
+    for (const environment of Object.values(server.environments)) {
+      environment.hot.send({ type: "full-reload", path: "*" });
     }
   }
   function refreshGeneratedMessages() {
@@ -105,8 +109,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       failUpdate = undefined;
       return;
     }
-    invalidate();
-    server?.ws.send({ type: "full-reload" });
+    reload();
     finishUpdate?.();
     pendingUpdate = undefined;
     finishUpdate = undefined;

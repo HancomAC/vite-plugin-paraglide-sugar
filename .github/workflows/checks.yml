@@ -14,11 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - node: 22
-            paraglide: 2.18.1
-          - node: 24
-            paraglide: 2.20.1
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -27,8 +23,6 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - if: matrix.paraglide == '2.18.1'
-        run: pnpm add --save-dev --save-exact @inlang/paraglide-js@${{ matrix.paraglide }}
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm check

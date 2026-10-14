@@ -30,8 +30,12 @@ Requirements:
 | --------------------------- | ------------------------ |
 | Node.js                     | `^22.12.0 \|\| >=24.0.0` |
 | Vite                        | `^8.0.14`                |
-| `@inlang/paraglide-js`      | `^2.18.1`                |
+| `@inlang/paraglide-js`      | `^2.20.1`                |
 | Svelte, for `.svelte` files | `^5.53.6`                |
+
+Paraglide 2.20.1 is the verified minimum, including generated TypeScript declarations
+for quoted and dotted message keys. Earlier compiler versions can emit invalid
+declarations for these keys.
 
 Svelte is an optional peer dependency. JavaScript and TypeScript projects do not
 need to install it.

@@ -9,17 +9,31 @@ type ExportOperation =
   | { kind: "star"; source: string }
   | { kind: "namespace"; source: string; name: string };
 /** Export statements of each generated module, reused while the file is unchanged. */
-export type ManifestCache = Map<string, { version: string; operations: ExportOperation[] }>;
+export type ManifestCache = Map<
+  string,
+  { version: string; operations: ExportOperation[]; code?: string }
+>;
+
+// Some filesystems store timestamps in steps of up to two seconds, so a rewrite
+// within one step can keep every stat field. Until a module is older than that,
+// its cache entry keeps the text it was parsed from for comparison.
+const timestampStepNs = 2_000_000_000n;
 
 function scanExports(file: string, cache: ManifestCache): ExportOperation[] {
   let version: string;
   let code: string;
+  let settled: boolean;
   try {
     const stat = fs.statSync(file, { bigint: true });
     version = `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
     const cached = cache.get(file);
-    if (cached?.version === version) return cached.operations;
+    if (cached?.version === version && cached.code === undefined) return cached.operations;
     code = fs.readFileSync(file, "utf8");
+    settled = BigInt(Date.now()) * 1_000_000n - stat.mtimeNs > timestampStepNs;
+    if (cached?.version === version && cached.code === code) {
+      if (settled) delete cached.code;
+      return cached.operations;
+    }
   } catch (cause) {
     throw new Error(
       `[paraglide-sugar] Cannot read ${file}. Run Paraglide before paraglideSugar with outputStructure: 'message-modules'.`,
@@ -86,7 +100,7 @@ function scanExports(file: string, cache: ManifestCache): ExportOperation[] {
       }
     }
   }
-  cache.set(file, { version, operations });
+  cache.set(file, settled ? { version, operations } : { version, operations, code });
   return operations;
 }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -77,6 +78,8 @@ try {
     ],
     consumer,
   );
+  // npm installs required peers automatically; the plugin must not bring ESLint.
+  assert.ok(!existsSync(path.join(consumer, "node_modules/eslint")), "ESLint was installed");
   console.log((await run(process.execPath, ["verify-without-svelte.mjs"], consumer)).trim());
   await run(
     npm,

@@ -446,6 +446,15 @@ export { values }`);
     }
   });
 
+  it("keeps import attributes on the retained marker import", () => {
+    for (const ending of [";", "", "\n"]) {
+      const result = transform(
+        `import { m, getLocale } from '#messages' with { type: "js" }${ending}\nexport const read = () => [m.hello, getLocale()];`,
+      );
+      expect(result.code).toContain(`import { getLocale } from "#messages" with { type: "js" };`);
+    }
+  });
+
   it("ignores a same-named import from an unrelated module", () => {
     const code = `import { m } from './different'; export const value = m.hello;`;
     expect(transformMessages(code, "/workspace/app/src/other.ts", messages, options)).toBeNull();

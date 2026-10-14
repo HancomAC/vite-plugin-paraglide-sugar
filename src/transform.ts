@@ -405,7 +405,9 @@ export function transformMessages(
       const named = kept.map(
         (specifier) => `${typeOnly.has(specifier) ? "type " : ""}${code.slice(...specifier.range)}`,
       );
-      retained = `import { ${named.join(", ")} } from ${JSON.stringify(declaration.source.value)};`;
+      // Keep import attributes, such as `with { type: "json" }`, after the specifier.
+      const attributes = code.slice(declaration.source.range[1], declaration.range[1]);
+      retained = `import { ${named.join(", ")} } from ${JSON.stringify(declaration.source.value)}${attributes.replace(/;?\s*$/, "")};`;
     }
     output.overwrite(
       declaration.range[0],

@@ -141,7 +141,19 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     name: "vite-plugin-paraglide-sugar",
     enforce: "pre",
     configResolved(config) {
-      roots = sourceRoots.map((root) => normalize(path.resolve(config.root, root)) + "/");
+      roots = sourceRoots.map((root) => {
+        let resolved = path.resolve(config.root, root);
+        if (!config.resolve?.preserveSymlinks) {
+          try {
+            resolved = fs.realpathSync(resolved);
+          } catch (error) {
+            // Source directories may be generated after config resolution.
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+          }
+        }
+        return normalize(resolved) + "/";
+      });
       generatedDirectory = path.resolve(config.root, options.outdir);
       indexFile = path.join(generatedDirectory, options.messagesEntry ?? "messages.js");
     },

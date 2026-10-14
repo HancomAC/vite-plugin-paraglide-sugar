@@ -9,7 +9,7 @@ const packageRoot = path.resolve(import.meta.dirname, "..");
 
 describe("symlinked source roots", () => {
   it.each([false, true])(
-    "translates linked sources without including neighbors when preserveSymlinks is %s",
+    "translates linked sources and rejects neighbors when preserveSymlinks is %s",
     async (preserveSymlinks) => {
       const root = await mkdtemp(path.join(tmpdir(), "paraglide-sugar-paths-"));
       try {
@@ -19,8 +19,8 @@ describe("symlinked source roots", () => {
           "generated/messages/hello.js": "export const hello = () => 'Hello from shared';",
           "src/messages.js":
             "import { createMessages } from 'vite-plugin-paraglide-sugar/runtime'; export const m = createMessages();",
-          "src/entry.ts":
-            "export { value } from '../shared/read.ts'; export { outside } from '../real-shared-other/read.ts';",
+          "src/entry.ts": "export { value } from '../shared/read.ts';",
+          "src/outside.ts": "export { outside } from '../real-shared-other/read.ts';",
           "real-shared/read.ts": "import { m } from '#messages'; export const value = m.hello;",
           "real-shared-other/read.ts":
             "import { m } from '#messages'; export const outside = () => m.hello;",
@@ -31,26 +31,28 @@ describe("symlinked source roots", () => {
           await writeFile(file, code);
         }
         await symlink(path.join(root, "real-shared"), path.join(root, "shared"), "junction");
-        const result = await build({
-          root,
-          configFile: false,
-          logLevel: "silent",
-          resolve: {
-            preserveSymlinks,
-            alias: {
-              "#messages": path.join(root, "src/messages.js"),
-              "vite-plugin-paraglide-sugar/runtime": path.join(packageRoot, "src/runtime.ts"),
+        const run = (entry: string) =>
+          build({
+            root,
+            configFile: false,
+            logLevel: "silent",
+            resolve: {
+              preserveSymlinks,
+              alias: {
+                "#messages": path.join(root, "src/messages.js"),
+                "vite-plugin-paraglide-sugar/runtime": path.join(packageRoot, "src/runtime.ts"),
+              },
             },
-          },
-          plugins: [
-            paraglideSugar({
-              outdir: "generated",
-              importSource: "#messages",
-              sourceRoots: ["src", "shared", "not-created-yet"],
-            }),
-          ],
-          build: { ssr: "src/entry.ts", write: false, minify: false },
-        });
+            plugins: [
+              paraglideSugar({
+                outdir: "generated",
+                importSource: "#messages",
+                sourceRoots: ["src", "shared", "not-created-yet"],
+              }),
+            ],
+            build: { ssr: entry, write: false, minify: false },
+          });
+        const result = await run("src/entry.ts");
         if ("on" in result) throw new Error("Expected a completed build");
         const entry = (Array.isArray(result) ? result : [result])
           .flatMap((bundle) => bundle.output)
@@ -60,7 +62,10 @@ describe("symlinked source roots", () => {
           `data:text/javascript;base64,${Buffer.from(entry.code).toString("base64")}`
         );
         expect(module.value).toBe("Hello from shared");
-        expect(module.outside).toThrow(/Uncompiled message access hello/);
+        // The neighbor is not transformed, and the build reports its marker import.
+        await expect(run("src/outside.ts")).rejects.toThrow(
+          /real-shared-other\/read\.ts imports from "#messages"/,
+        );
       } finally {
         await rm(root, { recursive: true, force: true });
       }

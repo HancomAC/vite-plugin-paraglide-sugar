@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parse, type TSESTree } from "@typescript-eslint/typescript-estree";
 import type { Plugin, ViteDevServer } from "vite";
 import { readMessageManifest, type ManifestCache } from "./manifest.js";
 import { mayImportMarker, transformMessages, type MessageManifest } from "./transform.js";
@@ -39,11 +40,14 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
   let generatedDirectory = path.resolve(options.outdir);
   let roots = sourceRoots.map((root) => normalize(path.resolve(root)) + "/");
   let generatedRoot = normalize(generatedDirectory) + "/";
+  let root = process.cwd();
   let indexFile = path.join(generatedDirectory, options.messagesEntry ?? "messages.js");
   let messages: MessageManifest | undefined;
   const scans: ManifestCache = new Map();
   const transformed = new Set<string>();
   const groups = new Set<string>();
+  // Resolved ids of the marker module, checked for leftover runtime importers.
+  const markers = new Set<string>();
   let server: ViteDevServer | undefined;
   let updateTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingUpdate: Promise<void> | undefined;
@@ -159,6 +163,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
         }
         return normalize(resolved) + "/";
       };
+      root = config.root;
       roots = sourceRoots.map(modulePrefix);
       // Paraglide output often sits inside a source root, such as src/lib/paraglide.
       generatedRoot = modulePrefix(options.outdir);
@@ -170,13 +175,69 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     buildStart: {
       order: "post",
       sequential: true,
-      handler() {
+      async handler() {
         messages = undefined;
         transformed.clear();
         groups.clear();
+        markers.clear();
         manifest();
         this.addWatchFile(indexFile);
+        if (!server) {
+          const marker = await this.resolve(options.importSource, path.join(root, "index.html"));
+          if (marker) markers.add(marker.id);
+        }
       },
+    },
+    // A marker import that the transform did not see, through another specifier
+    // or from outside sourceRoots, builds successfully and then throws on its
+    // first message read. The dev server and Vitest load modules on demand, so
+    // there the access itself reports the problem.
+    async buildEnd(error) {
+      if (error || server) return;
+      const exportName = options.exportName ?? "m";
+      const named = (node: TSESTree.Identifier | TSESTree.StringLiteral) =>
+        (node.type === "Identifier" ? node.name : node.value) === exportName;
+      const leftovers: string[] = [];
+      for (const marker of markers) {
+        for (const importer of this.getModuleInfo(marker)?.importers ?? []) {
+          const code = this.getModuleInfo(importer)?.code;
+          if (!code) continue;
+          let body;
+          try {
+            body = parse(code, { jsDocParsingMode: "none" }).body;
+          } catch {
+            continue;
+          }
+          for (const statement of body) {
+            // Find runtime imports and re-exports that expose the message object.
+            let source: string | undefined;
+            if (statement.type === "ImportDeclaration") {
+              if (
+                statement.specifiers.some(
+                  (specifier) =>
+                    specifier.type === "ImportNamespaceSpecifier" ||
+                    (specifier.type === "ImportSpecifier" && named(specifier.imported)),
+                )
+              )
+                source = statement.source.value;
+            } else if (statement.type === "ExportNamedDeclaration") {
+              if (statement.specifiers.some((specifier) => named(specifier.local)))
+                source = statement.source?.value;
+            } else if (statement.type === "ExportAllDeclaration") {
+              source = statement.source.value;
+            }
+            if (source === undefined || (await this.resolve(source, importer))?.id !== marker)
+              continue;
+            const file = path.relative(root, importer.split("?", 1)[0]).split(path.sep).join("/");
+            leftovers.push(`${file} imports from ${JSON.stringify(source)}`);
+          }
+        }
+      }
+      if (leftovers.length) {
+        this.error(
+          `[paraglide-sugar] The message object ${JSON.stringify(exportName)} is still imported at runtime, so its reads were not compiled and would throw "Uncompiled message access":\n${leftovers.map((line) => `  - ${line}`).join("\n")}\nImport it as ${JSON.stringify(options.importSource)} (the exact importSource) from a file inside sourceRoots (${sourceRoots.join(", ")}).`,
+        );
+      }
     },
     configureServer(devServer) {
       server = devServer;
@@ -247,6 +308,12 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       if (result) {
         transformed.add(id);
         this.addWatchFile(indexFile);
+        if (!server) {
+          // The specifier can resolve differently per importer, such as through
+          // package imports or per-directory tsconfig paths.
+          const marker = await this.resolve(options.importSource, id);
+          if (marker) markers.add(marker.id);
+        }
         for (const { key, position } of result.missing) {
           this.warn({
             message: `[paraglide-sugar] Unknown message key ${JSON.stringify(key)}; preserving the undefined fallback.`,

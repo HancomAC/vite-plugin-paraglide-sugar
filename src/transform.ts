@@ -1,5 +1,7 @@
 import { createRequire } from "node:module";
-import * as typescriptParser from "@typescript-eslint/parser";
+import { analyze } from "@typescript-eslint/scope-manager";
+import { parse } from "@typescript-eslint/typescript-estree";
+import { visitorKeys } from "@typescript-eslint/visitor-keys";
 import MagicString from "magic-string";
 
 export type MessageExport = { source: string; exportName: string };
@@ -30,6 +32,23 @@ type ParsedSource = {
 
 const runtimeSource = "vite-plugin-paraglide-sugar/runtime";
 const require = createRequire(import.meta.url);
+// Scope analysis needs only a syntax tree and a scope manager. The full
+// @typescript-eslint/parser requires an ESLint peer, and svelte-eslint-parser
+// recognizes it as type-aware and adds a much slower TypeScript analysis pass.
+const typescriptParser = {
+  parseForESLint(code: string, options: { filePath?: string; sourceType?: "module" | "script" }) {
+    const ast = parse(code, {
+      filePath: options.filePath,
+      jsDocParsingMode: "none",
+      comment: true,
+      loc: true,
+      range: true,
+      tokens: true,
+    });
+    ast.sourceType = options.sourceType ?? "module";
+    return { ast, scopeManager: analyze(ast, { sourceType: ast.sourceType }), visitorKeys };
+  },
+};
 const identifierName = /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u;
 const transparentExpressions = new Set([
   "TSAsExpression",

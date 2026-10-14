@@ -51,8 +51,11 @@ const typescriptParser = {
 };
 const identifierName = /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u;
 // Keywords cannot contain escapes, so an escaped module specifier always
-// follows a literal `from` or `import(`.
-const escapedSpecifier = /(?:\bfrom|\bimport\s*\()\s*(["'`])(?:(?!\1)[^\\\r\n])*\\/;
+// follows a literal `from` or `import(`, possibly with comments in between.
+const gap = String.raw`(?:\s|/\*[\s\S]*?\*/|//[^\n]*\n)*`;
+const escapedSpecifier = new RegExp(
+  String.raw`(?:\bfrom|\bimport${gap}\()${gap}(["'\`])(?:(?!\1)[^\\\r\n])*\\`,
+);
 const transparentExpressions = new Set([
   "TSAsExpression",
   "TSTypeAssertion",

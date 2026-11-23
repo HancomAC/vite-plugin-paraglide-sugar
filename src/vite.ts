@@ -28,6 +28,23 @@ const groupPrefix = "virtual:paraglide-sugar/messages/";
 const resolvedGroupPrefix = `\0${groupPrefix}`;
 const sourceId = /^[^?]*\.(?:svelte|[cm]?[jt]s|[jt]sx)(?:\?|$)/;
 const normalize = (file: string) => file.split(path.sep).join("/");
+const maxCachedFiles = 1024;
+const maxCachedCharacters = 16 * 1024 * 1024;
+
+type CachedTransform = Pick<ParaglideSugarOptions, "importSource" | "exportName" | "missingKey"> & {
+  environment: string;
+  code: string;
+  result: ReturnType<typeof transformMessages>;
+};
+
+function sameMessages(previous: MessageManifest | undefined, current: MessageManifest) {
+  if (!previous || previous.size !== current.size) return false;
+  for (const [key, entry] of current) {
+    const old = previous.get(key);
+    if (old?.source !== entry.source || old.exportName !== entry.exportName) return false;
+  }
+  return true;
+}
 
 export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
   if (!options || typeof options.outdir !== "string" || !options.outdir.trim())
@@ -48,6 +65,9 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
   let indexFile = path.join(generatedDirectory, options.messagesEntry ?? "messages.js");
   let messages: MessageManifest | undefined;
   const scans: ManifestCache = new Map();
+  const cachedTransforms = new Map<string, CachedTransform>();
+  let shareTransforms = false;
+  let cachedCharacters = 0;
   const transformed = new Set<string>();
   const groups = new Set<string>();
   // Resolved ids of the marker module, checked for leftover runtime importers.
@@ -70,6 +90,43 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       messages = readMessageManifest(indexFile, scans);
     }
     return messages;
+  }
+  function clearTransforms() {
+    cachedTransforms.clear();
+    cachedCharacters = 0;
+  }
+  function transformSource(code: string, file: string, environment: string | undefined) {
+    const catalog = manifest();
+    const cached = environment && cachedTransforms.get(file);
+    const { importSource, exportName, missingKey } = options;
+    if (
+      cached &&
+      cached.environment !== environment &&
+      cached.code === code &&
+      cached.importSource === importSource &&
+      cached.exportName === exportName &&
+      cached.missingKey === missingKey
+    )
+      return cached.result;
+
+    const result = transformMessages(code, file, catalog, options);
+    // Keep the first input for each file, including files that parsed to a no-op.
+    if (environment && !cached && cachedTransforms.size < maxCachedFiles) {
+      const characters =
+        code.length + (result ? result.code.length + result.map.mappings.length : 0);
+      if (cachedCharacters + characters <= maxCachedCharacters) {
+        cachedTransforms.set(file, {
+          environment,
+          code,
+          importSource,
+          exportName,
+          missingKey,
+          result,
+        });
+        cachedCharacters += characters;
+      }
+    }
+    return result;
   }
   function isGeneratedMessage(file: string) {
     const relative = path.relative(generatedDirectory, file);
@@ -154,6 +211,10 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     name: "vite-plugin-paraglide-sugar",
     enforce: "pre",
     configResolved(config) {
+      clearTransforms();
+      shareTransforms =
+        config.command === "build" &&
+        !!(config.builder?.sharedConfigBuild || config.builder?.sharedPlugins);
       const modulePrefix = (directory: string) => {
         let resolved = path.resolve(config.root, directory);
         if (!config.resolve?.preserveSymlinks) {
@@ -180,11 +241,13 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       order: "post",
       sequential: true,
       async handler() {
+        const previous = messages;
         messages = undefined;
         transformed.clear();
         groups.clear();
         markers.clear();
-        manifest();
+        const current = manifest();
+        if (cachedTransforms.size && !sameMessages(previous, current)) clearTransforms();
         this.addWatchFile(indexFile);
         if (!server) {
           const marker = await this.resolve(options.importSource, path.join(root, "index.html"));
@@ -197,6 +260,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     // first message read. The dev server and Vitest load modules on demand, so
     // there the access itself reports the problem.
     async buildEnd(error) {
+      if (error) clearTransforms();
       if (error || server) return;
       const display = (id: string) =>
         path.relative(root, id.split("?", 1)[0]).split(path.sep).join("/");
@@ -242,6 +306,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
         }
       }
       if (leftovers.size) {
+        clearTransforms();
         this.error(
           `[paraglide-sugar] The message object ${JSON.stringify(options.exportName ?? "m")} is still used at runtime, so its reads were not compiled and would throw "Uncompiled message access":\n${[...leftovers].map((line) => `  - ${line}`).join("\n")}\nImport it as ${JSON.stringify(options.importSource)} (the exact importSource) from a file inside sourceRoots (${sourceRoots.join(", ")}).`,
         );
@@ -266,7 +331,17 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     watchChange(id) {
       if (!isGeneratedMessage(id)) return;
       if (server) scheduleRefresh(id);
-      else messages = undefined;
+      else {
+        messages = undefined;
+        clearTransforms();
+      }
+    },
+    // closeBundle also runs between SSR and client in shared builders.
+    buildApp: {
+      order: "post",
+      async handler() {
+        clearTransforms();
+      },
     },
     closeBundle: dispose,
     resolveId(id) {
@@ -313,9 +388,11 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       await pendingUpdate;
       // Worker entry requests contain ?worker_file&type=module. They still
       // carry source code; the parser needs the underlying filename/extension.
+      const environment =
+        shareTransforms && !this.meta.watchMode ? this.environment.name : undefined;
       let result;
       try {
-        result = transformMessages(code, file, manifest(), options);
+        result = transformSource(code, file, environment);
       } catch (error) {
         const pos = (error as { pos?: unknown }).pos;
         // Reporting with the source offset adds a code frame in Vite's output.
@@ -338,7 +415,19 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
             pos: position,
           });
         }
-        return { code: result.code, map: result.map };
+        // Rolldown normalizes sources on returned maps. Keep the cached copy private.
+        const map = result.map;
+        return {
+          code: result.code,
+          map: environment
+            ? {
+                ...map,
+                names: [...map.names],
+                sources: [...map.sources],
+                sourcesContent: map.sourcesContent?.slice(),
+              }
+            : map,
+        };
       }
       return null;
     },

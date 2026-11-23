@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { compile } from "svelte/compiler";
-import { build, type Plugin } from "vite";
+import { build, type BuildOptions, type Plugin } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readMessageManifest } from "../src/manifest.js";
 import { paraglideSugar } from "../src/vite.js";
@@ -114,6 +114,7 @@ async function bundle(
   entry: string,
   beforePlugins: Plugin[] = [],
   options: Partial<Parameters<typeof paraglideSugar>[0]> = {},
+  buildOptions: BuildOptions = {},
 ) {
   const result = await build({
     configFile: false,
@@ -147,6 +148,7 @@ async function bundle(
       minify: false,
       sourcemap: true,
       rollupOptions: { external: [/^node:/], output: { format: "es" } },
+      ...buildOptions,
     },
   });
   const outputs = Array.isArray(result) ? result : [result];
@@ -526,6 +528,44 @@ describe("uncompiled marker imports", () => {
 });
 
 describe("bundled static messages", () => {
+  it("drops unused groups and the marker when another export keeps their module in a client build", async () => {
+    const f = await fixture();
+    f.files["proto.js"] = `const own = () => 'Own message'; export { own as '__proto__' };`;
+    await f.writeMessages();
+    await f.write(
+      "src/i18n.js",
+      `import { createMessages } from 'vite-plugin-paraglide-sugar/runtime';
+       import { messages } from 'virtual:paraglide-sugar/messages/unused';
+       export const m = createMessages();
+       export const lookup = key => messages[key]?.();
+       export const helper = () => 'helper';`,
+    );
+    const entry = await f.write(
+      "src/entry.js",
+      `export { helper } from '#translations';
+       export { messages } from 'virtual:paraglide-sugar/messages/__';`,
+    );
+    const chunks = await bundle(
+      f,
+      entry,
+      [],
+      {},
+      {
+        ssr: false,
+        minify: true,
+        rollupOptions: { input: entry, preserveEntrySignatures: "strict" },
+      },
+    );
+    const code = chunks.map((chunk) => chunk.code).join("\n");
+    expect(code).not.toContain("UNUSED_TRANSLATION_SENTINEL");
+    expect(code).not.toContain("Uncompiled message access");
+    const { helper, messages } = await importBundle(chunks.find((chunk) => chunk.isEntry)!.code);
+    expect(helper()).toBe("helper");
+    expect(Object.getPrototypeOf(messages)).toBeNull();
+    expect(Object.keys(messages)).toEqual(["__proto__"]);
+    expect(messages.__proto__()).toBe("Own message");
+  }, 120_000);
+
   it("bounds virtual lookups to their prefix and preserves undefined for absent and prototype keys", async () => {
     const f = await fixture();
     const entry = await f.write(

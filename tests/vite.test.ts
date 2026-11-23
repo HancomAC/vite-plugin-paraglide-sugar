@@ -137,7 +137,7 @@ async function bundle(
     resolve: {
       alias: {
         "vite-plugin-paraglide-sugar/runtime": path.join(packageRoot, "src/runtime.ts"),
-        "#translations": path.join(f.root, "src/i18n.js"),
+        [options.importSource ?? "#translations"]: path.join(f.root, "src/i18n.js"),
       },
     },
     ssr: { noExternal: true },
@@ -210,6 +210,48 @@ describe("generated message export discovery", () => {
 });
 
 describe("Vite message transform lifecycle", () => {
+  it("dispatches Sugar hooks for virtual groups and marker sources while skipping ordinary modules", async () => {
+    const f = await fixture();
+    const importSource = "$messages.[keys]+";
+    const group = "virtual:paraglide-sugar/messages/color_";
+    await f.write("src/ordinary.js", `export const value = 'ordinary';`);
+    await f.write(
+      "src/escaped.ts",
+      String.raw`import { m } from /* marker */ '\x24messages.[keys]+'; export const label = m.hello;`,
+    );
+    const entry = await f.write(
+      "src/entry.ts",
+      `import { value } from './ordinary.js';
+       import { label } from './escaped.ts?custom';
+       import { m } from ${JSON.stringify(importSource)};
+       import { messages } from ${JSON.stringify(group)};
+       export const values = [value, label, m.hello, messages.color_red()];`,
+    );
+    const calls = new Map<string, unknown[][]>();
+    const observer: Plugin = {
+      name: "observe-sugar-hook-calls",
+      configResolved({ plugins }) {
+        const sugar = plugins.find((plugin) => plugin.name === "vite-plugin-paraglide-sugar")!;
+        for (const name of ["resolveId", "load", "transform"] as const) {
+          const hook = sugar[name];
+          if (!hook || typeof hook === "function") throw new Error(`Missing ${name} hook filter`);
+          calls.set(name, vi.spyOn(hook, "handler").mock.calls);
+        }
+      },
+    };
+    const chunks = await bundle(f, entry, [observer], { importSource });
+    const result = await importBundle(chunks.find((chunk) => chunk.isEntry)!.code);
+    expect(result.values).toEqual(["ordinary", "안녕", "안녕", "Red"]);
+    for (const [name, args] of calls) {
+      const ids = args.map((call) => call[name === "transform" ? 1 : 0]);
+      expect(ids).not.toContainEqual(expect.stringMatching(/[/\\]ordinary\.js$/));
+      if (name === "resolveId") expect(ids).toContain(group);
+      if (name === "load") expect(ids).toContain(`\0${group}`);
+      if (name === "transform")
+        expect(ids).toContainEqual(expect.stringMatching(/escaped\.ts\?custom$/));
+    }
+  });
+
   it("uses the configured import and export names and diagnoses unknown keys by default", async () => {
     const f = await fixture();
     const { call } = pluginHarness(f, { exportName: "text" });

@@ -26,7 +26,7 @@ export type ParaglideSugarOptions = {
 
 const groupPrefix = "virtual:paraglide-sugar/messages/";
 const resolvedGroupPrefix = `\0${groupPrefix}`;
-const extensions = /\.(?:svelte|[cm]?[jt]s|[jt]sx)$/;
+const sourceId = /^[^?]*\.(?:svelte|[cm]?[jt]s|[jt]sx)(?:\?|$)/;
 const normalize = (file: string) => file.split(path.sep).join("/");
 
 export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
@@ -150,7 +150,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
     disposeWatcher = undefined;
   }
 
-  return {
+  const plugin = {
     name: "vite-plugin-paraglide-sugar",
     enforce: "pre",
     configResolved(config) {
@@ -303,7 +303,7 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       const normalized = normalize(file);
       if (
         ["raw", "url", "worker", "sharedworker", "svelte"].some((key) => parameters.has(key)) ||
-        !extensions.test(file) ||
+        !sourceId.test(id) ||
         !roots.some((root) => normalized.startsWith(root)) ||
         normalized.startsWith(generatedRoot)
       )
@@ -340,6 +340,17 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
         return { code: result.code, map: result.map };
       }
       return null;
+    },
+  } satisfies Plugin;
+
+  return {
+    ...plugin,
+    resolveId: { filter: { id: new RegExp(`^${groupPrefix}`) }, handler: plugin.resolveId },
+    load: { filter: { id: new RegExp(`^${resolvedGroupPrefix}`) }, handler: plugin.load },
+    transform: {
+      // The marker can be spelled with a string escape. Let mayImportMarker check those sources.
+      filter: { id: sourceId, code: [options.importSource, "\\"] },
+      handler: plugin.transform,
     },
   };
 }

@@ -81,7 +81,7 @@ async function buildBoth(revise: "same catalog" | "new catalog" | "new source") 
     await builder.buildApp();
     return {
       results,
-      parses: vi.mocked(transformMessages).mock.calls.filter(([, file]) => file === entry).length,
+      parses: vi.mocked(transformMessages).mock.calls.length,
       warnings: warn.mock.calls
         .map(([message]) => message)
         .filter((message) => message.includes('Unknown message key "extra"')),

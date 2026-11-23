@@ -11,7 +11,6 @@ import { compileCatalog } from "../tests/fixtures/compile-catalog.mjs";
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = await mkdtemp(path.join(tmpdir(), "paraglide-sugar-package-"));
-const consumer = path.join(temporary, "consumer");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 
@@ -52,57 +51,71 @@ try {
   assert.ok(!packedPaths.some((file) => file.startsWith("src/") || file.startsWith("tests/")));
   assert.ok(!packedPaths.some((file) => file.endsWith(".ts") && !file.endsWith(".d.ts")));
 
-  await cp(path.join(root, "tests/fixtures/consumer"), consumer, { recursive: true });
-  await writeFile(
-    path.join(consumer, "package.json"),
-    JSON.stringify({
-      name: "paraglide-sugar-installed-consumer",
-      private: true,
-      type: "module",
-    }),
-  );
-  for (const [filename, contents] of Object.entries(await compileCatalog())) {
-    const destination = path.join(consumer, "src/generated", filename);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, contents);
+  const catalog = await compileCatalog();
+  for (const major of [5, 6, 7]) {
+    const consumer = path.join(temporary, `consumer-ts${major}`);
+    await cp(path.join(root, "tests/fixtures/consumer"), consumer, { recursive: true });
+    await writeFile(
+      path.join(consumer, "package.json"),
+      JSON.stringify({
+        name: "paraglide-sugar-installed-consumer",
+        private: true,
+        type: "module",
+      }),
+    );
+    for (const [filename, contents] of Object.entries(catalog)) {
+      const destination = path.join(consumer, "src/generated", filename);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, contents);
+    }
+    await run(
+      npm,
+      [
+        "install",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--package-lock=false",
+        path.join(temporary, packed.filename),
+        `typescript@^${major}`,
+        ...["vite", "@inlang/paraglide-js"].map(
+          (name) =>
+            `${name}@${packageJson.devDependencies[name] ?? packageJson.dependencies[name]}`,
+        ),
+      ],
+      consumer,
+    );
+    console.log(
+      (await run(process.execPath, ["verify-typescript.mjs", String(major)], consumer)).trim(),
+    );
+    // npm installs required peers automatically; the plugin must not bring ESLint.
+    assert.ok(!existsSync(path.join(consumer, "node_modules/eslint")), "ESLint was installed");
+    console.log((await run(process.execPath, ["verify-without-svelte.mjs"], consumer)).trim());
+    await run(
+      npm,
+      [
+        "install",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--package-lock=false",
+        ...["svelte", "@sveltejs/vite-plugin-svelte"].map(
+          (name) => `${name}@${packageJson.devDependencies[name]}`,
+        ),
+      ],
+      consumer,
+    );
+    await run(
+      process.execPath,
+      ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"],
+      consumer,
+    );
+    console.log(
+      `TypeScript ${major} consumer: generated catalog types, subpath exports, and virtual declarations passed.`,
+    );
+    console.log((await run(process.execPath, ["verify.mjs"], consumer)).trim());
+    await rm(consumer, { recursive: true, force: true });
   }
-  await run(
-    npm,
-    [
-      "install",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      "--package-lock=false",
-      path.join(temporary, packed.filename),
-      ...["vite", "@inlang/paraglide-js", "typescript"].map(
-        (name) => `${name}@${packageJson.devDependencies[name] ?? packageJson.dependencies[name]}`,
-      ),
-    ],
-    consumer,
-  );
-  // npm installs required peers automatically; the plugin must not bring ESLint.
-  assert.ok(!existsSync(path.join(consumer, "node_modules/eslint")), "ESLint was installed");
-  console.log((await run(process.execPath, ["verify-without-svelte.mjs"], consumer)).trim());
-  await run(
-    npm,
-    [
-      "install",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      "--package-lock=false",
-      ...["svelte", "@sveltejs/vite-plugin-svelte"].map(
-        (name) => `${name}@${packageJson.devDependencies[name]}`,
-      ),
-    ],
-    consumer,
-  );
-  await run(process.execPath, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"], consumer);
-  console.log(
-    "Packed consumer: generated catalog types, subpath exports, and virtual declarations passed.",
-  );
-  console.log((await run(process.execPath, ["verify.mjs"], consumer)).trim());
   console.log(
     `Packed ${packed.filename}: ${packed.files.length} files, ${packed.size} compressed bytes.`,
   );

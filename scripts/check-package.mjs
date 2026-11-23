@@ -49,7 +49,12 @@ try {
     if (file.endsWith(".map")) {
       const map = JSON.parse(await readFile(path.join(root, file), "utf8"));
       assert.ok(
-        map.sources.every((source) => /^\.\.\/src\/[\w-]+\.ts$/.test(source)),
+        map.sources.every(
+          (source) =>
+            /^\.\.\/src\/[\w-]+\.ts$/.test(source) ||
+            (/^npm:(?:@[\w.-]+\/)?[\w.-]+\/[\w./-]+$/.test(source) &&
+              !source.split("/").includes("..")),
+        ),
         `Unexpected source map path in ${file}`,
       );
     }

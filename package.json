@@ -53,8 +53,8 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/build.mjs",
-    "check": "tsc -p tsconfig.json",
+    "build": "node node_modules/@typescript/native/bin/tsc -p tsconfig.build.json && node scripts/build.mjs",
+    "check": "node node_modules/@typescript/native/bin/tsc -p tsconfig.json",
     "test": "vitest run",
     "test:package": "node scripts/test-package.mjs",
     "check:package": "node scripts/check-package.mjs",
@@ -78,6 +78,8 @@
     "@inlang/sdk": "2.10.2",
     "@sveltejs/vite-plugin-svelte": "7.1.2",
     "@types/node": "25.9.1",
+    "@typescript/native": "npm:typescript@^7",
+    "esbuild": "^0.28.2",
     "oxfmt": "0.51.0",
     "oxlint": "1.66.0",
     "source-map-js": "1.2.1",

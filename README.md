@@ -170,6 +170,17 @@ The default export and the named `paraglideSugar` export are available from both
 
 ### TypeScript
 
+Consumer projects can use TypeScript 5, 6, or 7. The plugin keeps its own TypeScript 5
+runtime dependency for AST parsing. The parser consumers are bundled into the plugin
+so they resolve that dependency instead of the application's compiler API.
+Do not override all transitive `typescript` dependencies to version 7: TypeScript 7
+no longer provides the legacy API used by the parser stack.
+
+The plugin itself is built and type-checked with TypeScript 7, installed under the
+`@typescript/native` npm alias so it can coexist with the parser dependency.
+When using Paraglide's `emitTsDeclarations` with TypeScript 7, use Paraglide 2.21.0
+or newer, which supports declaration generation through the native compiler CLI.
+
 `typeof import("./paraglide/messages.js")` needs type information for Paraglide's
 generated JavaScript. Provide it in one of two ways:
 

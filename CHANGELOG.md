@@ -3,6 +3,23 @@
 All notable changes to this project are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- Packed consumer compatibility tests for TypeScript 5, 6, and 7, including Svelte
+  builds and generated catalog declarations.
+
+### Fixed
+
+- Bundle the parser stack to prevent npm from hoisting `ts-api-utils` beside a
+  consumer's incompatible TypeScript 7 package.
+
+### Changed
+
+- Build and type-check the plugin with TypeScript 7 via the `@typescript/native`
+  alias, keeping the parser's TypeScript 5 dependency isolated from consumer compilers.
+
 ## 0.1.0 — Unreleased
 
 Initial public release.

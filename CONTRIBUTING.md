@@ -23,7 +23,7 @@ pnpm install --frozen-lockfile
 
 | Command             | What it does                                                                     |
 | ------------------- | -------------------------------------------------------------------------------- |
-| `pnpm check`        | Type-checks `src/` and `tests/` with `tsc`.                                      |
+| `pnpm check`        | Type-checks `src/` and `tests/` with the TypeScript 7 compiler.                  |
 | `pnpm lint`         | Runs oxlint on `src/`, `tests/`, and `scripts/`.                                 |
 | `pnpm format:check` | Checks formatting with oxfmt. `pnpm format` rewrites files.                      |
 | `pnpm test`         | Runs the unit and Vite integration tests with Vitest.                            |
@@ -76,3 +76,8 @@ Before opening a pull request, check that:
 - `pnpm format:check`, `pnpm lint`, `pnpm check`, `pnpm build`, `pnpm test`, and
   `pnpm test:package` pass;
 - `README.md` and `CHANGELOG.md` are updated for user-facing changes.
+
+The `@typescript/native` alias installs TypeScript `^7` for `check` and `build`.
+The runtime `typescript` dependency remains on 5.x for the parser APIs.
+`test:package` verifies independent consumer installations with TypeScript 5, 6,
+and 7, including generated types and plain JavaScript and Svelte builds.

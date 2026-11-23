@@ -16,7 +16,7 @@ export type Messages<Catalog> = {
  * The Vite plugin removes static accesses. An untransformed access is an error.
  */
 export function createMessages<Catalog>(): Messages<Catalog> {
-  return new Proxy(Object.create(null), {
+  return /* @__PURE__ */ new Proxy(Object.create(null), {
     get(_target, key) {
       throw new Error(
         `[paraglide-sugar] Uncompiled message access ${String(key)}. Configure the plugin importSource, exportName and sourceRoots for this consumer.`,

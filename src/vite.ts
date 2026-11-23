@@ -286,16 +286,17 @@ export function paraglideSugar(options: ParaglideSugarOptions): Plugin {
       this.addWatchFile(indexFile);
       const prefix = id.slice(resolvedGroupPrefix.length);
       const imports: string[] = [];
-      const properties: string[] = [];
+      const properties = ["__proto__: null"];
       for (const [key, entry] of manifest()) {
         if (!key.startsWith(prefix)) continue;
-        const local = `message_${properties.length}`;
+        const local = `message_${imports.length}`;
         imports.push(
           `import { ${JSON.stringify(entry.exportName)} as ${local} } from ${JSON.stringify(entry.source)};`,
         );
         properties.push(`[${JSON.stringify(key)}]: ${local}`);
       }
-      return `${imports.join("\n")}\nexport const messages = Object.assign(Object.create(null), {${properties.join(",\n")}});`;
+      // A literal lets bundlers discard unused groups. Computed keys keep "__proto__" callable.
+      return `${imports.join("\n")}\nexport const messages = {${properties.join(",\n")}};`;
     },
     async transform(code, id) {
       const [file, query = ""] = id.split("?", 2);

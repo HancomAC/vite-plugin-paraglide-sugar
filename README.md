@@ -323,10 +323,11 @@ const label = messages[`status_${status}`]?.() ?? "Unknown";
 ```
 
 Keys retain their full names: `status_ready`, for example, is indexed as
-`messages.status_ready`. Every generated key starting with the prefix is included.
-Unknown keys yield `undefined`. Choose a narrow prefix to limit the messages included in
-the group. The prefix must be nonempty and contain only letters, numbers, `_`, `.`, `$`,
-or `-`.
+`messages.status_ready`. When a lookup uses the group, it includes every generated key
+starting with the prefix. Production bundlers can discard an unused group and its
+message imports. Unknown keys yield `undefined`. Choose a narrow prefix to limit the
+messages included in the group. The prefix must be nonempty and contain only letters,
+numbers, `_`, `.`, `$`, or `-`.
 
 Opt in to the virtual module declarations in your application's declaration file:
 

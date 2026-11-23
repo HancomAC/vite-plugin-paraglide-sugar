@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- Allow production bundles to drop unused virtual message groups and message markers.
+
 ## 0.2.0 — 2026-11-23
 
 ### Added

@@ -42,8 +42,8 @@ pnpm pack
 ```
 
 Install the resulting `.tgz` file in an application, for example with
-`npm install -D /absolute/path/to/vite-plugin-paraglide-sugar-0.1.0.tgz` or
-`pnpm add -D /absolute/path/to/vite-plugin-paraglide-sugar-0.1.0.tgz`. The archive
+`npm install -D /absolute/path/to/vite-plugin-paraglide-sugar-0.2.0.tgz` or
+`pnpm add -D /absolute/path/to/vite-plugin-paraglide-sugar-0.2.0.tgz`. The archive
 contains built ESM JavaScript and TypeScript declarations; consumers do not load the
 TypeScript sources.
 

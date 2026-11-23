@@ -8,10 +8,10 @@ maintainer action.
 
 1. Merge the reviewed changes and passing checks into `main`.
 2. Use a clean checkout. Set the version in `package.json` and update `CHANGELOG.md`;
-   for the first release the version is already `0.1.0`.
+   use the version intended for the next release.
 3. Run `pnpm install --frozen-lockfile` and `npm run release:check`.
 4. Commit the release metadata, then create and push the matching tag, for example
-   `v0.1.0`. Do not tag a checkout with uncommitted changes.
+   `v0.2.0`. Do not tag a checkout with uncommitted changes.
 
 `release:check` verifies formatting, lint, types, the build, tests, the packed file
 inventory and package exports, source map paths, and a separately installed consumer.
@@ -21,7 +21,7 @@ To inspect the archive without publishing:
 
 ```sh
 npm pack
-npm publish vite-plugin-paraglide-sugar-0.1.0.tgz --dry-run --access public
+npm publish vite-plugin-paraglide-sugar-0.2.0.tgz --dry-run --access public
 ```
 
 ## First publication
@@ -65,14 +65,14 @@ Dispatch the workflow against the release tag using the GitHub CLI. First valida
 upload the archive without publishing:
 
 ```sh
-gh workflow run publish.yml --ref v0.1.0 -f version=0.1.0 -f publish=false
+gh workflow run publish.yml --ref v0.2.0 -f version=0.2.0 -f publish=false
 ```
 
 Inspect the successful run and its artifact in GitHub Actions. When that version is
 approved for publication, dispatch it with publishing enabled:
 
 ```sh
-gh workflow run publish.yml --ref v0.1.0 -f version=0.1.0 -f publish=true
+gh workflow run publish.yml --ref v0.2.0 -f version=0.2.0 -f publish=true
 ```
 
 Selecting the matching tag ensures that provenance identifies the package's release
